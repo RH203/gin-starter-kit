@@ -1,8 +1,9 @@
-.PHONY: all run dev build test tidy clean docker-up docker-down air-install migrate swagger
+.PHONY: all run dev build test tidy clean docker-up docker-down air-install migrate seed swagger
 
 APP_NAME = gin-starter-pack
 MAIN_FILE = cmd/api/main.go
 MIGRATE_MAIN = cmd/migrate/main.go
+SEED_MAIN = cmd/seed/main.go
 GOPATH = $(shell go env GOPATH)
 AIR = $(GOPATH)/bin/air
 SWAG = $(GOPATH)/bin/swag
@@ -42,6 +43,10 @@ swagger:
 # Database Migrations (GORM AutoMigrate)
 migrate:
 	go run $(MIGRATE_MAIN)
+
+# Database Seeding
+seed:
+	go run $(SEED_MAIN)
 
 build:
 	go build -o bin/$(APP_NAME) $(MAIN_FILE)

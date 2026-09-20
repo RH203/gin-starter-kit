@@ -17,12 +17,13 @@ A production-ready REST API starter pack built with **Go (Golang)** and the **Gi
 9. [Rate Limiting & CORS](#rate-limiting--cors)
 10. [Swagger API Documentation](#swagger-api-documentation)
 11. [Database Migrations (GORM AutoMigrate)](#database-migrations-gorm-automigrate)
-12. [Environment Variables Reference](#environment-variables-reference)
-13. [Getting Started](#getting-started)
-14. [Step-by-Step Guide: Adding a New Feature](#step-by-step-guide-adding-a-new-feature)
-15. [API Endpoints & Request Examples](#api-endpoints--request-examples)
-16. [Testing & Mocking](#testing--mocking)
-17. [Deployment & Docker](#deployment--docker)
+12. [Database Seeder & Faker (gofakeit)](#database-seeder--faker-gofakeit)
+13. [Environment Variables Reference](#environment-variables-reference)
+14. [Getting Started](#getting-started)
+15. [Step-by-Step Guide: Adding a New Feature](#step-by-step-guide-adding-a-new-feature)
+16. [API Endpoints & Request Examples](#api-endpoints--request-examples)
+17. [Testing & Mocking](#testing--mocking)
+18. [Deployment & Docker](#deployment--docker)
 
 ---
 
@@ -42,6 +43,7 @@ A production-ready REST API starter pack built with **Go (Golang)** and the **Gi
 - **Email Service**: Standalone `pkg/mail` package supporting `smtp` (TLS/SSL) and `log` (console logging for dev) drivers.
 - **Asynchronous Background Worker**: Concurrent goroutine worker pool with job queues and graceful shutdown (e.g., asynchronous welcome email dispatch via Mailer).
 - **Database Migrations**: Native GORM `AutoMigrate` runs automatically on startup and can also be executed via standalone CLI (`make migrate`).
+- **Database Seeder & Faker**: Modular seeder registry (`database/seeder`) powered by `gofakeit/v6` to seed admin accounts and bulk realistic dummy data (`make seed`).
 - **Air Hot Reload**: Instant live code reloading for development using `make dev`.
 - **DevOps Ready**: Multi-stage `Dockerfile`, `docker-compose.yml`, and `Makefile` shortcuts.
 
@@ -100,10 +102,17 @@ gin-starter-pack/
 ├── cmd/
 │   ├── api/
 │   │   └── main.go                 # Application entrypoint, DI wiring, graceful shutdown
-│   └── migrate/
-│       └── main.go                 # Database migration CLI runner (GORM AutoMigrate)
+│   ├── migrate/
+│   │   └── main.go                 # Database migration CLI runner (GORM AutoMigrate)
+│   └── seed/
+│       └── main.go                 # Database seeder CLI runner (admin & faker data)
 ├── config/
 │   └── config.go                   # Viper configuration parser & environment binder
+├── database/
+│   └── seeder/
+│       ├── seeder.go               # Seeder registry and runner contracts
+│       ├── seeder_test.go          # Seeder unit tests and idempotency checks
+│       └── user_seeder.go          # UserSeeder with gofakeit fake user generator
 ├── docs/                           # Auto-generated Swagger / OpenAPI spec files
 │   ├── docs.go
 │   ├── swagger.json
@@ -150,6 +159,11 @@ gin-starter-pack/
 │   └── worker/
 │       ├── worker.go               # Asynchronous worker pool & job definitions
 │       └── worker_test.go          # Unit tests for worker pool
+├── templates/
+│   ├── emails/
+│   │   ├── reset_password.html     # Responsive password reset HTML email
+│   │   └── welcome.html            # Responsive onboarding welcome HTML email
+│   └── templates.go                # Go embed.FS embedding HTML templates
 ├── .air.toml                       # Air configuration for hot reload
 ├── .env.example                    # Environment variable template
 ├── .env                            # Active environment configuration (git-ignored)
@@ -385,13 +399,59 @@ Database schema migration is handled natively by **GORM AutoMigrate**.
   # Or directly:
   go run cmd/migrate/main.go
   ```
-- **Adding Entities**: Simply register new entity structs in `cmd/api/main.go` and `cmd/migrate/main.go`:
-  ```go
-  db.AutoMigrate(
-      &domain.User{},
-      &domain.Product{},
-  )
-  ```
+- **Adding Entities**: Simply register new entity structs in `internal/domain/entities.go` via `domain.Entities()`.
+
+---
+
+## Database Seeder & Faker (gofakeit)
+
+The starter pack includes a modular database seeder subsystem in `database/seeder/` integrated with `github.com/brianvoe/gofakeit/v6` to seed initial data and generate bulk realistic dummy records.
+
+### Features:
+- **Deterministic Admin User**: Automatically provisions a default administrator account (`admin@example.com` / `password123`) if not already present.
+- **Idempotent Execution**: Safe to run repeatedly; skips existing records based on unique constraints to avoid duplicate key errors.
+- **Faker Generation**: Generates realistic dummy names and email addresses using `gofakeit/v6`.
+- **Extensible Registry Pattern**: Easily add new domain seeders by implementing the `seeder.Seeder` interface.
+
+### Running Seeders:
+```bash
+# Via Makefile shortcut:
+make seed
+
+# Or directly via CLI:
+go run cmd/seed/main.go
+```
+
+### Adding a Custom Seeder:
+Create a new seeder struct implementing `seeder.Seeder`:
+```go
+package seeder
+
+import (
+    "gorm.io/gorm"
+)
+
+type ProductSeeder struct{}
+
+func (s *ProductSeeder) Name() string {
+    return "ProductSeeder"
+}
+
+func (s *ProductSeeder) Seed(db *gorm.DB) error {
+    // Implement seeding logic using gofakeit
+    return nil
+}
+```
+Register the seeder inside `database/seeder/seeder.go`:
+```go
+func RunAll(db *gorm.DB) error {
+    reg := NewRegistry(
+        NewUserSeeder(),
+        &ProductSeeder{},
+    )
+    return reg.Run(db)
+}
+```
 
 ---
 
@@ -763,6 +823,7 @@ Unit test examples can be found in `internal/usecase/user_usecase_test.go`, `pkg
 | `make tidy` | Tidy up Go module dependencies (`go mod tidy`) |
 | `make swagger` | Regenerate OpenAPI specification & Swagger UI docs |
 | `make migrate` | Run GORM AutoMigrate standalone via CLI |
+| `make seed` | Seed database with initial admin and fake users |
 | `make air-install` | Install Air binary (`go install github.com/air-verse/air@latest`) |
 | `make docker-up` | Spin up services with Docker Compose |
 | `make docker-down` | Tear down Docker Compose services |
