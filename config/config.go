@@ -65,6 +65,8 @@ type MailConfig struct {
 }
 
 type LogConfig struct {
+	Driver     string // "stdout", "file", "stack", "discard", or custom registered driver
+	Format     string // "json", "text"
 	Level      string // "debug", "info", "warn", "error"
 	Directory  string // e.g. "logs"
 	Filename   string // e.g. "app.log"
@@ -130,6 +132,8 @@ func LoadConfig() (*Config, error) {
 	v.SetDefault("MAIL_FROM_NAME", "Gin Starter Pack")
 	v.SetDefault("MAIL_ENCRYPTION", "tls")
 
+	v.SetDefault("LOG_DRIVER", "stack")
+	v.SetDefault("LOG_FORMAT", "json")
 	v.SetDefault("LOG_LEVEL", "info")
 	v.SetDefault("LOG_DIR", "logs")
 	v.SetDefault("LOG_FILENAME", "app.log")
@@ -210,6 +214,8 @@ func LoadConfig() (*Config, error) {
 			Encryption:  v.GetString("MAIL_ENCRYPTION"),
 		},
 		Log: LogConfig{
+			Driver:     v.GetString("LOG_DRIVER"),
+			Format:     v.GetString("LOG_FORMAT"),
 			Level:      v.GetString("LOG_LEVEL"),
 			Directory:  v.GetString("LOG_DIR"),
 			Filename:   v.GetString("LOG_FILENAME"),
