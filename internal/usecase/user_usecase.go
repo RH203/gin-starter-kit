@@ -2,13 +2,16 @@ package usecase
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"gin-starter-pack/internal/domain"
 	"gin-starter-pack/pkg/hash"
 	"gin-starter-pack/pkg/jwt"
 	"gin-starter-pack/pkg/mail"
+	"gin-starter-pack/pkg/queue"
 	"gin-starter-pack/pkg/redis"
 	"gin-starter-pack/pkg/worker"
 
@@ -20,6 +23,7 @@ type userUsecase struct {
 	cache    *redis.Client
 	jwt      *jwt.Service
 	worker   *worker.Pool
+	queue    queue.Queue
 	mailer   mail.Mailer
 }
 
@@ -28,7 +32,7 @@ func NewUserUsecase(
 	userRepo domain.UserRepository,
 	cache *redis.Client,
 	jwtService *jwt.Service,
-	workerPool *worker.Pool,
+	queueDispatcher queue.Queue,
 	mailer ...mail.Mailer,
 ) domain.UserUsecase {
 	var m mail.Mailer
@@ -39,9 +43,34 @@ func NewUserUsecase(
 		userRepo: userRepo,
 		cache:    cache,
 		jwt:      jwtService,
-		worker:   workerPool,
+		queue:    queueDispatcher,
 		mailer:   m,
 	}
+}
+
+// RegisterUserQueueHandlers registers domain worker handlers for user events
+func RegisterUserQueueHandlers(reg *queue.Registry, mailer mail.Mailer) {
+	reg.Register(domain.JobWelcomeEmail, func(ctx context.Context, payload []byte) error {
+		var data domain.WelcomeEmailPayload
+		if err := json.Unmarshal(payload, &data); err != nil {
+			return err
+		}
+
+		if mailer != nil {
+			subject := fmt.Sprintf("Welcome to Gin Starter Pack, %s!", data.UserName)
+			templateData := map[string]interface{}{
+				"AppName":   "Gin Starter Pack",
+				"UserName":  data.UserName,
+				"Email":     data.Email,
+				"ActionURL": "http://localhost:8080",
+				"Year":      time.Now().Year(),
+			}
+			return mailer.SendTemplate(ctx, data.Email, subject, "welcome.html", templateData)
+		}
+
+		slog.Info("Welcome email dispatched to user", "email", data.Email, "name", data.UserName, "user_id", data.UserID)
+		return nil
+	})
 }
 
 func (u *userUsecase) Register(ctx context.Context, req *domain.CreateUserRequest) (*domain.UserResponse, error) {
@@ -71,7 +100,13 @@ func (u *userUsecase) Register(ctx context.Context, req *domain.CreateUserReques
 	}
 
 	// Dispatch asynchronous background job (e.g. welcome email)
-	if u.worker != nil {
+	if u.queue != nil {
+		_ = u.queue.Dispatch(ctx, domain.JobWelcomeEmail, domain.WelcomeEmailPayload{
+			UserID:   user.ID,
+			Email:    user.Email,
+			UserName: user.Name,
+		})
+	} else if u.worker != nil {
 		u.worker.Dispatch(&worker.WelcomeEmailJob{
 			UserID:   user.ID,
 			Email:    user.Email,

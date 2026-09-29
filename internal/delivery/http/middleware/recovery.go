@@ -15,6 +15,7 @@ func Recovery() gin.HandlerFunc {
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("Panic recovered",
+					"request_id", GetRequestID(c),
 					"error", r,
 					"stack", string(debug.Stack()),
 				)

@@ -11,19 +11,20 @@ A production-ready REST API starter pack built with **Go (Golang)** and the **Gi
 3. [Project Directory Structure](#project-directory-structure)
 4. [Database Configuration (Ultra Flexible)](#database-configuration-ultra-flexible)
 5. [Redis Configuration](#redis-configuration)
-6. [Daily Rotating Logger (Laravel-Style)](#daily-rotating-logger-laravel-style)
-7. [Background Job Worker Pool](#background-job-worker-pool)
+6. [Pluggable Structured Logger (slog)](#pluggable-structured-logger-slog)
+7. [Unified Background Queue Subsystem (Laravel-Style)](#unified-background-queue-subsystem-laravel-style)
 8. [Email Service (pkg/mail)](#email-service-pkgmail)
-9. [Rate Limiting & CORS](#rate-limiting--cors)
-10. [Swagger API Documentation](#swagger-api-documentation)
-11. [Database Migrations (GORM AutoMigrate)](#database-migrations-gorm-automigrate)
-12. [Database Seeder & Faker (gofakeit)](#database-seeder--faker-gofakeit)
-13. [Environment Variables Reference](#environment-variables-reference)
-14. [Getting Started](#getting-started)
-15. [Step-by-Step Guide: Adding a New Feature](#step-by-step-guide-adding-a-new-feature)
-16. [API Endpoints & Request Examples](#api-endpoints--request-examples)
-17. [Testing & Mocking](#testing--mocking)
-18. [Deployment & Docker](#deployment--docker)
+9. [Rate Limiting, CORS & Security Middlewares](#rate-limiting-cors--security-middlewares)
+10. [Observability & Kubernetes Health Probes](#observability--kubernetes-health-probes)
+11. [Swagger API Documentation](#swagger-api-documentation)
+12. [Database Migrations & Safety Guard](#database-migrations--safety-guard)
+13. [Database Seeder & Faker (gofakeit)](#database-seeder--faker-gofakeit)
+14. [Environment Variables Reference](#environment-variables-reference)
+15. [Getting Started](#getting-started)
+16. [Step-by-Step Guide: Adding a New Feature](#step-by-step-guide-adding-a-new-feature)
+17. [API Endpoints & Request Examples](#api-endpoints--request-examples)
+18. [Testing & Mocking](#testing--mocking)
+19. [Deployment & Docker Hardening](#deployment--docker-hardening)
 
 ---
 
@@ -36,16 +37,18 @@ A production-ready REST API starter pack built with **Go (Golang)** and the **Gi
 - **Optional Redis Cache**: Redis can be toggled on/off (`REDIS_ENABLED=true/false`). When disabled, queries safely bypass the cache with zero downtime or panics.
 - **JWT Authentication**: Built-in HMAC-SHA256 JWT generation, validation, and Gin auth middleware (`Authorization: Bearer <token>`).
 - **Dedicated Password Hashing**: Standalone `pkg/hash` module powered by Bcrypt.
-- **Daily Rotating Logger (Laravel-Style)**: Powered by Go standard `log/slog` and `lumberjack`. Outputs to stdout (terminal) and rotating files in `logs/app.log` with automatic gzip archiving.
+- **Pluggable Structured Logger (slog)**: Powered by Go standard `log/slog` and `lumberjack`. Supports pluggable drivers (`stdout`, `file`, `stack`, `discard`) and formats (`json`, `text`) with automatic daily gzip log file rotation and extensible 3rd-party driver registration.
+- **Unified Background Queue (Laravel-Style)**: Modular queue engine in `pkg/queue` supporting `database` (SQL table `jobs`, survives server crashes with zero extra infrastructure), `redis` (distributed high-throughput), `memory` (fast local dev), and `sync` (unit tests). Features atomic locking and exponential retry backoff.
+- **Dedicated Worker Service**: Background jobs can run embedded in the API server or as a standalone dedicated worker container (`cmd/worker/main.go` / `make worker`) for independent horizontal scaling.
+- **Enterprise Security & Tracing**: OWASP-recommended HTTP security headers, unique `X-Request-ID` generation & propagation, and correlated request logs in `slog`.
+- **Kubernetes-Ready Health Probes**: Endpoints for `/health` (system diagnostics), `/health/live` (liveness probe), and `/health/ready` (readiness probe returning `503 Service Unavailable` if database is down).
+- **Production Migration Guard**: Configurable `DB_AUTO_MIGRATE=false` toggle prevents DDL race conditions and lock contention in multi-replica deployments.
 - **IP-Based Rate Limiting**: Token-bucket algorithm per client IP (`golang.org/x/time/rate`), returning `429 Too Many Requests` when limits are exceeded.
 - **Configurable CORS**: Dynamic allowed origins, HTTP methods, and headers configurable via `.env`.
 - **Interactive Swagger / OpenAPI Docs**: Auto-generated API documentation served at `/swagger/index.html`.
 - **Email Service**: Standalone `pkg/mail` package supporting `smtp` (TLS/SSL) and `log` (console logging for dev) drivers.
-- **Asynchronous Background Worker**: Concurrent goroutine worker pool with job queues and graceful shutdown (e.g., asynchronous welcome email dispatch via Mailer).
-- **Database Migrations**: Native GORM `AutoMigrate` runs automatically on startup and can also be executed via standalone CLI (`make migrate`).
 - **Database Seeder & Faker**: Modular seeder registry (`database/seeder`) powered by `gofakeit/v6` to seed admin accounts and bulk realistic dummy data (`make seed`).
-- **Air Hot Reload**: Instant live code reloading for development using `make dev`.
-- **DevOps Ready**: Multi-stage `Dockerfile`, `docker-compose.yml`, and `Makefile` shortcuts.
+- **DevOps & Container Hardening**: Multi-stage `Dockerfile` running as non-root `appuser:appuser`, built-in container `HEALTHCHECK`, multi-service `docker-compose.yml`, and `Makefile` shortcuts.
 
 ---
 
@@ -102,6 +105,8 @@ gin-starter-pack/
 ├── cmd/
 │   ├── api/
 │   │   └── main.go                 # Application entrypoint, DI wiring, graceful shutdown
+│   ├── worker/
+│   │   └── main.go                 # Dedicated standalone Queue Worker runner
 │   ├── migrate/
 │   │   └── main.go                 # Database migration CLI runner (GORM AutoMigrate)
 │   └── seed/
@@ -120,24 +125,28 @@ gin-starter-pack/
 ├── internal/
 │   ├── domain/                     # Core domain entities & interface contracts
 │   │   ├── user.go                 # User entity, DTOs, and interface definitions
+│   │   ├── job.go                  # JobRecord entity and Queue job payloads
 │   │   └── errors.go               # Standard domain error variables
 │   ├── repository/                 # Data access layer
 │   │   └── gorm/
 │   │       └── user_repository.go  # GORM multi-driver repository implementation
 │   ├── usecase/                    # Business logic layer
-│   │   ├── user_usecase.go         # User business logic implementation
+│   │   ├── user_usecase.go         # User business logic implementation & queue handlers
 │   │   └── user_usecase_test.go    # Unit tests with in-memory mock repository
 │   └── delivery/
 │       └── http/                   # Transport layer (Gin HTTP)
 │           ├── handler/
 │           │   ├── user_handler.go   # CRUD & authentication handlers
-│           │   └── health_handler.go # System diagnostics health check handler
+│           │   ├── health_handler.go # Diagnostic, liveness, & readiness handlers
+│           │   └── health_handler_test.go
 │           ├── middleware/
 │           │   ├── auth.go         # JWT Bearer token authentication middleware
 │           │   ├── cors.go         # Configurable CORS middleware
-│           │   ├── logger.go       # slog request logging middleware
+│           │   ├── logger.go       # slog access logging enriched with Request ID
 │           │   ├── ratelimit.go    # IP-based token bucket rate limiter
-│           │   └── recovery.go     # Panic recovery middleware
+│           │   ├── recovery.go     # Panic recovery middleware
+│           │   ├── request_id.go   # X-Request-ID propagation middleware
+│           │   └── security.go     # OWASP security headers middleware
 │           └── router.go           # Gin engine setup & route group definitions
 ├── pkg/
 │   ├── database/
@@ -148,16 +157,25 @@ gin-starter-pack/
 │   ├── jwt/
 │   │   └── jwt.go                  # HMAC-SHA256 JWT token generation & verification
 │   ├── logger/
-│   │   └── logger.go               # Daily rotating slog logger with lumberjack
+│   │   ├── logger.go               # Pluggable slog logger (stdout, file, stack, discard)
+│   │   └── logger_test.go          # Logger driver and format unit tests
 │   ├── mail/
 │   │   ├── mail.go                 # SMTP & Log mailer implementations
 │   │   └── mail_test.go            # Unit tests for mail service
+│   ├── queue/
+│   │   ├── queue.go                # Unified Queue & Worker contracts & Handler Registry
+│   │   ├── driver_database.go      # Laravel-style persistent DB queue with retries
+│   │   ├── driver_redis.go         # Distributed Redis queue driver
+│   │   ├── driver_memory.go        # In-memory buffered channel queue driver
+│   │   ├── driver_sync.go          # Synchronous test execution driver
+│   │   ├── factory.go              # Pluggable queue factory and driver registry
+│   │   └── queue_test.go           # Comprehensive queue test suite
 │   ├── redis/
 │   │   └── redis.go                # Redis client wrapper with graceful fallback
 │   ├── response/
 │   │   └── response.go             # Standardized JSON API response helpers
 │   └── worker/
-│       ├── worker.go               # Asynchronous worker pool & job definitions
+│       ├── worker.go               # Legacy worker pool implementation
 │       └── worker_test.go          # Unit tests for worker pool
 ├── templates/
 │   ├── emails/
@@ -167,8 +185,8 @@ gin-starter-pack/
 ├── .air.toml                       # Air configuration for hot reload
 ├── .env.example                    # Environment variable template
 ├── .env                            # Active environment configuration (git-ignored)
-├── Dockerfile                      # Multi-stage Alpine Docker build
-├── docker-compose.yml              # Services: app, postgres, mysql, redis
+├── Dockerfile                      # Hardened multi-stage non-root Alpine Docker build
+├── docker-compose.yml              # Multi-container stack (api, worker, postgres, redis)
 ├── Makefile                        # Shortcuts for development commands
 ├── go.mod
 ├── go.sum
@@ -269,54 +287,110 @@ REDIS_DB=0
 
 ---
 
-## Daily Rotating Logger (Laravel-Style)
+## Pluggable Structured Logger (slog)
 
-Structured logging using Go's standard `log/slog` coupled with `lumberjack.Logger` in `pkg/logger`.
-Operates similarly to Laravel's logging system:
-- Real-time logging to both the **terminal** and rotating files in `logs/`.
-- Active file: `logs/app.log`.
-- Automatically rolls over based on file size or retention age and compresses old logs into `.gz`.
+Structured logging powered by Go's standard library `log/slog` coupled with `lumberjack.Logger` in `pkg/logger`. Inspired by Laravel's logging channels, it supports pluggable drivers, customizable serialization formats, and 3rd-party driver registration.
+
+### Built-in Drivers:
+- **`stack`** (Default): Simultaneously writes structured logs to both **stdout (terminal)** and rotating files in `logs/app.log`.
+- **`stdout`**: Outputs solely to standard output (recommended for Docker / Kubernetes containers where logs are ingested by collectors like Fluentd, Vector, or Promtail).
+- **`file`**: Writes solely to rotating disk files with size/age retention and automatic `.gz` compression.
+- **`discard`**: Silent mode (no-op writer) ideal for high-speed benchmark runs and unit testing.
+
+### Supported Formats:
+- **`json`** (Default): Produces standardized JSON lines (`{"time":"...","level":"INFO","msg":"...","request_id":"..."}`) perfectly formatted for Datadog, ELK, and Grafana Loki.
+- **`text`**: Human-readable key-value text format ideal for local console debugging.
 
 Configuration in `.env`:
 ```env
-LOG_LEVEL=info        # debug, info, warn, error
-LOG_DIR=logs          # log file directory
-LOG_FILENAME=app.log  # active log file name
-LOG_MAX_SIZE_MB=100   # maximum file size before rotation (MB)
-LOG_MAX_BACKUPS=30    # maximum number of archived files retained
-LOG_MAX_AGE_DAYS=30   # maximum age to retain files (days)
-LOG_COMPRESS=true     # gzip compression for old archives
+LOG_DRIVER=stack         # stack, stdout, file, discard
+LOG_FORMAT=json          # json, text
+LOG_LEVEL=info           # debug, info, warn, error
+LOG_DIR=logs             # log directory (used when driver is file/stack)
+LOG_FILENAME=app.log     # active log file name
+LOG_MAX_SIZE_MB=100      # max size before rotation (MB)
+LOG_MAX_BACKUPS=30       # max retained archived files
+LOG_MAX_AGE_DAYS=30      # retention period (days)
+LOG_COMPRESS=true        # gzip compression for old archives
+```
+
+### Registering Custom Drivers:
+You can plug in third-party or cloud handlers (e.g. Sentry, Papertrail, CloudWatch) without editing core logger files:
+```go
+logger.RegisterDriver("custom-cloud", func(cfg *config.LogConfig) (slog.Handler, io.Closer, error) {
+    handler := myCustomCloudHandler.New(...)
+    return handler, closer, nil
+})
 ```
 
 ---
 
-## Background Job Worker Pool
+## Unified Background Queue Subsystem (Laravel-Style)
 
-A concurrent **Worker Pool** in `pkg/worker` processes heavy or deferred tasks in the background without blocking client HTTP responses.
+A robust, enterprise-grade task queue in `pkg/queue`. Modeled after Laravel's Queue system, it decouples job dispatching from the storage backend via a pluggable driver interface.
 
-### How it works:
-1. Create a struct that implements the `worker.Job` interface:
+### Supported Queue Drivers:
+1. **`database` (Recommended Default for Persistence)**:
+   - Persists jobs to an SQL table (`jobs`) managed by GORM.
+   - **Zero additional infrastructure required**: Works automatically with PostgreSQL, MySQL, and SQLite.
+   - **Crash-proof & Durable**: If the application server or container crashes/restarts, tasks remain safely stored in the database.
+   - **Atomic Reservation & Exponential Backoff**: Uses transactional status claiming (`pending` -> `processing`) and automatically reschedules failed jobs with exponential retry delays (e.g. 2s, 4s, 8s...).
+2. **`redis`**:
+   - High-throughput distributed queue backed by Redis Lists (`LPUSH` / `BRPOP`).
+   - Ideal for high-scale microservices processing thousands of background events per second.
+3. **`memory`**:
+   - Fast, non-blocking in-memory Go channel worker pool (`pkg/queue/driver_memory.go`).
+   - Ideal for local development without any database overhead.
+4. **`sync`**:
+   - Executes jobs immediately in the calling goroutine. Ideal for deterministic unit tests.
+
+### How to Register Handlers and Dispatch Jobs:
+
+1. **Define Job Identifier & Payload** (`internal/domain/job.go`):
    ```go
-   type WelcomeEmailJob struct {
-       UserID   string
-       Email    string
-       UserName string
-   }
+   const JobWelcomeEmail = "email:welcome"
 
-   func (j *WelcomeEmailJob) Name() string {
-       return "WelcomeEmailJob:" + j.Email
-   }
-
-   func (j *WelcomeEmailJob) Execute(ctx context.Context) error {
-       // Send email or perform heavy task
-       return nil
+   type WelcomeEmailPayload struct {
+       UserID   string `json:"user_id"`
+       Email    string `json:"email"`
+       UserName string `json:"user_name"`
    }
    ```
-2. Dispatch the job from your usecase:
+
+2. **Register the Handler** (`internal/usecase/`):
    ```go
-   workerPool.Dispatch(&WelcomeEmailJob{UserID: "123", Email: "user@example.com", UserName: "User"})
+   queueRegistry.Register(domain.JobWelcomeEmail, func(ctx context.Context, payload []byte) error {
+       var data domain.WelcomeEmailPayload
+       if err := json.Unmarshal(payload, &data); err != nil {
+           return err
+       }
+       return mailer.SendTemplate(ctx, data.Email, "Welcome!", "welcome.html", data)
+   })
    ```
-3. The Worker Pool manages worker goroutines and ensures a **graceful shutdown** (drains and finishes in-flight jobs before the server terminates).
+
+3. **Dispatch from Business Logic** (`internal/usecase/`):
+   ```go
+   // Immediate background execution
+   err := queueDispatcher.Dispatch(ctx, domain.JobWelcomeEmail, domain.WelcomeEmailPayload{
+       UserID:   user.ID,
+       Email:    user.Email,
+       UserName: user.Name,
+   })
+
+   // Or delayed execution (e.g. process after 10 minutes)
+   err := queueDispatcher.DispatchDelayed(ctx, domain.JobWelcomeEmail, payload, 10*time.Minute)
+   ```
+
+### Running Dedicated Worker Service (Production):
+In production environments, background jobs can be processed on dedicated worker pods/containers so heavy processing does not degrade HTTP API latency:
+
+```bash
+# Run standalone worker runner via Makefile:
+make worker
+
+# Or directly:
+go run cmd/worker/main.go
+```
 
 ---
 
@@ -351,28 +425,54 @@ err := mailer.SendSimple(ctx, "recipient@example.com", "Subject Here", "Hello fr
 
 ---
 
-## Rate Limiting & CORS
+## Rate Limiting, CORS & Security Middlewares
 
-### IP Rate Limiting (Token Bucket)
-Guards against brute-force attacks and DDoS:
+### 1. IP Rate Limiting (Token Bucket)
+Guards against brute-force attacks and abuse:
 - Implemented with `golang.org/x/time/rate`.
 - Assigns a rate and burst limit per client IP.
-- Exceeding the quota triggers an immediate `429 Too Many Requests`.
+- Exceeding the quota returns `429 Too Many Requests`.
 
-Configuration in `.env`:
 ```env
 RATE_LIMIT_ENABLED=true
 RATE_LIMIT_RPS=20.0     # Average requests per second per IP
 RATE_LIMIT_BURST=40     # Peak burst allowance
 ```
 
-### CORS
-Configure allowed origins, methods, and headers:
+### 2. Configurable CORS
+Configure allowed origins (comma-separated or JSON array), methods, and headers:
 ```env
-CORS_ALLOWED_ORIGINS=*
+CORS_ALLOWED_ORIGINS=["http://localhost:3000","https://example.com"]
 CORS_ALLOWED_METHODS=GET,POST,PUT,PATCH,DELETE,OPTIONS
 CORS_ALLOWED_HEADERS=Content-Type,Authorization,X-Requested-With,Accept
+CORS_ALLOW_CREDENTIALS=true
 ```
+
+### 3. Request ID Correlation Middleware (`X-Request-ID`)
+Every incoming HTTP request receives a unique UUID tracking identifier:
+- Preserves existing upstream client headers or generates a new UUID v4.
+- Injected into the request context and returned in HTTP response header `X-Request-ID`.
+- Automatically attached to every `slog` access log entry for end-to-end distributed tracing.
+
+### 4. OWASP Security Headers Middleware
+Hardened HTTP response headers protect against common web attacks:
+- `X-Content-Type-Options: nosniff` (mitigates MIME-type confusion attacks)
+- `X-Frame-Options: DENY` (prevents clickjacking attacks)
+- `X-XSS-Protection: 1; mode=block` (legacy cross-site scripting filter)
+- `Referrer-Policy: strict-origin-when-cross-origin` (prevents sensitive path leakage)
+- `Strict-Transport-Security: max-age=31536000; includeSubDomains` (enforced when `APP_ENV=production`)
+
+---
+
+## Observability & Kubernetes Health Probes
+
+Three diagnostic endpoints ensure smooth operation and zero-downtime rolling updates in Kubernetes, Docker Swarm, and AWS ECS:
+
+| Endpoint | Probe Type | Purpose & Behavior | HTTP Status |
+|---|---|---|---|
+| **`/health`** | Diagnostic | Returns comprehensive JSON report with database latency, redis connectivity, and system timestamp. | `200 OK` (or `503` if degraded) |
+| **`/health/live`** | Liveness Probe | Verifies the web server process is running and responding. Used by orchestrators to restart hung containers. | `200 OK` |
+| **`/health/ready`** | Readiness Probe | Verifies the primary database connection is operational. **Returns `503 Service Unavailable` if database is down**, instructing the load balancer to halt routing traffic to the unready pod. | `200 OK` / `503 Service Unavailable` |
 
 ---
 
@@ -387,13 +487,13 @@ Interactive OpenAPI / Swagger UI is integrated out-of-the-box:
 
 ---
 
-## Database Migrations (GORM AutoMigrate)
+## Database Migrations & Safety Guard
 
 Database schema migration is handled natively by **GORM AutoMigrate**.
 
-### How It Works:
-- **Automatic on Startup**: When you start the API server (`make dev` or `make run`), `cmd/api/main.go` executes `db.AutoMigrate(...)` for all registered entities.
-- **Standalone CLI Migration**: You can run migrations without starting the HTTP server:
+### Production Safety Guard (`DB_AUTO_MIGRATE`):
+- **Development (`DB_AUTO_MIGRATE=true`)**: Automatically runs `db.AutoMigrate(...)` when the server starts (`make dev` or `make run`).
+- **Production (`DB_AUTO_MIGRATE=false`)**: In production deployments with multiple replica pods, auto-migrate should be disabled to prevent database lock contention and race conditions. Migrations should be executed in a CI/CD pipeline or Kubernetes InitContainer using the standalone CLI:
   ```bash
   make migrate
   # Or directly:
@@ -473,6 +573,7 @@ func RunAll(db *gorm.DB) error {
 | `DB_MAX_OPEN_CONNS` | int | `25` | Max connection pool size |
 | `DB_MAX_IDLE_CONNS` | int | `10` | Max idle connections |
 | `DB_CONN_MAX_LIFETIME` | int | `15` | Connection lifetime (minutes) |
+| `DB_AUTO_MIGRATE` | bool | `true` | Run GORM AutoMigrate on boot (`true` for dev, `false` for multi-replica prod) |
 | `REDIS_ENABLED` | bool | `false` | Enable/disable Redis (`true`/`false`) |
 | `REDIS_HOST` | string | `localhost` | Redis server host |
 | `REDIS_PORT` | string | `6379` | Redis server port |
@@ -488,6 +589,8 @@ func RunAll(db *gorm.DB) error {
 | `MAIL_FROM_ADDRESS` | string | `noreply@example.com` | Default sender email address |
 | `MAIL_FROM_NAME` | string | `Gin Starter Pack` | Default sender name |
 | `MAIL_ENCRYPTION` | string | `tls` | Encryption protocol (`tls`, `ssl`, `none`) |
+| `LOG_DRIVER` | string | `stack` | Pluggable driver (`stdout`, `file`, `stack`, `discard`) |
+| `LOG_FORMAT` | string | `json` | Structured format (`json` for ELK/Datadog/Loki or `text` for dev) |
 | `LOG_LEVEL` | string | `info` | Log level (`debug`, `info`, `warn`, `error`) |
 | `LOG_DIR` | string | `logs` | Directory for log files |
 | `LOG_FILENAME` | string | `app.log` | Active log file name |
@@ -502,8 +605,13 @@ func RunAll(db *gorm.DB) error {
 | `RATE_LIMIT_ENABLED` | bool | `true` | Enable/disable rate limiter |
 | `RATE_LIMIT_RPS` | float | `20.0` | Requests allowed per second per IP |
 | `RATE_LIMIT_BURST` | int | `40` | Burst request allowance |
-| `WORKER_CONCURRENCY` | int | `5` | Number of concurrent worker goroutines |
-| `WORKER_QUEUE_SIZE` | int | `100` | Background job buffer queue size |
+| `QUEUE_DRIVER` | string | `database` | Background queue driver: `database` (SQL table `jobs`), `redis`, `memory`, `sync` |
+| `QUEUE_NAME` | string | `default` | Active queue partition name |
+| `QUEUE_CONCURRENCY` | int | `5` | Number of concurrent queue worker goroutines |
+| `QUEUE_MAX_ATTEMPTS` | int | `3` | Max retry attempts before marking task as failed |
+| `QUEUE_POLL_INTERVAL_MS`| int | `1000` | Polling frequency for database queue (milliseconds) |
+| `WORKER_CONCURRENCY` | int | `5` | Legacy in-memory worker concurrency |
+| `WORKER_QUEUE_SIZE` | int | `100` | Legacy in-memory buffer queue size |
 
 ---
 
@@ -650,9 +758,15 @@ func (u *productUsecase) GetProduct(ctx context.Context, id string) (*domain.Pro
 
 ## API Endpoints & Request Examples
 
-### 1. Health Check
+### 1. Health & Kubernetes Probes
+
+#### Diagnostic Overview (`/health`)
 - **URL**: `GET /health`
-- **Response**:
+- **Response Headers**:
+  `X-Request-ID: 7a840e69-df42-4f36-8e50-934c9c1b3fbc`
+  `X-Content-Type-Options: nosniff`
+  `X-Frame-Options: DENY`
+- **Response Body** (`200 OK` or `503 Service Unavailable` if dependencies fail):
 ```json
 {
   "success": true,
@@ -661,8 +775,38 @@ func (u *productUsecase) GetProduct(ctx context.Context, id string) (*domain.Pro
     "database": "connected",
     "redis": "disabled",
     "status": "up",
-    "time": "2026-09-19T06:23:21Z"
+    "time": "2026-09-29T04:14:15Z"
   }
+}
+```
+
+#### Kubernetes Liveness Probe (`/health/live`)
+- **URL**: `GET /health/live`
+- **Purpose**: Verifies that the HTTP server process is running and responsive.
+- **Response** (`200 OK`):
+```json
+{
+  "status": "alive",
+  "time": "2026-09-29T04:14:15Z"
+}
+```
+
+#### Kubernetes Readiness Probe (`/health/ready`)
+- **URL**: `GET /health/ready`
+- **Purpose**: Checks primary database connectivity.
+- **Healthy Response** (`200 OK`):
+```json
+{
+  "status": "ready",
+  "time": "2026-09-29T04:14:15Z"
+}
+```
+- **Degraded Response** (`503 Service Unavailable` - halts pod traffic routing):
+```json
+{
+  "status": "unready",
+  "reason": "database unavailable",
+  "time": "2026-09-29T04:14:15Z"
 }
 ```
 
@@ -811,26 +955,52 @@ Unit test examples can be found in `internal/usecase/user_usecase_test.go`, `pkg
 
 ---
 
-## Deployment & Docker
+## Deployment & Docker Hardening
 
 ### Makefile Command Shortcuts
 | Command | Description |
 |---|---|
 | `make dev` | Run application with **Air Hot Reload** (auto rebuild on code changes) |
-| `make run` | Run application directly via `go run` |
-| `make build` | Compile binary into `bin/gin-starter-pack` |
-| `make test` | Run all unit tests with `-v -race` |
+| `make run` | Run HTTP API server directly via `go run` |
+| `make worker` | Run dedicated background **Queue Worker** runner (`cmd/worker/main.go`) |
+| `make build` | Compile all binaries into `bin/` (`gin-starter-pack`, `worker`, `migrate`, `seed`) |
+| `make test` | Run all unit & integration tests with `-v -race` |
 | `make tidy` | Tidy up Go module dependencies (`go mod tidy`) |
 | `make swagger` | Regenerate OpenAPI specification & Swagger UI docs |
 | `make migrate` | Run GORM AutoMigrate standalone via CLI |
 | `make seed` | Seed database with initial admin and fake users |
 | `make air-install` | Install Air binary (`go install github.com/air-verse/air@latest`) |
-| `make docker-up` | Spin up services with Docker Compose |
+| `make docker-up` | Spin up services with Docker Compose (API, Worker, Postgres, Redis) |
 | `make docker-down` | Tear down Docker Compose services |
 | `make clean` | Remove binaries, tmp files, logs, and temporary SQLite databases |
 
-### Build Docker Image
+### Hardened Production Dockerfile
+The production Docker build is hardened according to CIS benchmark standards:
+- **Multi-stage compilation**: Strips debugging symbols (`-ldflags="-w -s"`) and packages `api`, `worker`, and `migrate` into a clean Alpine image (~25MB).
+- **Non-root execution**: Runs under non-privileged user `appuser:appuser` (UID 10001) to protect container hosts.
+- **Built-in Healthcheck**: Automatically polls `GET http://localhost:8080/health/live` to enable self-healing container orchestrators.
+
 ```bash
+# Build production Docker image
 docker build -t gin-starter-pack:latest .
 ```
-The Docker build utilizes a multi-stage process producing a minimal Alpine Linux image.
+
+### Docker Compose Multi-Service Topology
+In production, background job processing scales independently from web traffic:
+```yaml
+services:
+  app:    # Web API Server running cmd/api/main.go
+  worker: # Dedicated Queue Worker running cmd/worker/main.go
+  postgres: # Primary SQL Database with healthcheck
+  redis:  # In-memory Cache & Queue Broker with healthcheck
+```
+```bash
+# Start all containers in background with automated health checks
+docker compose up -d
+
+# View live API server logs
+docker compose logs -f app
+
+# View live background queue worker logs
+docker compose logs -f worker
+```
