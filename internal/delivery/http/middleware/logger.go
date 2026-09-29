@@ -19,6 +19,7 @@ func Logger() gin.HandlerFunc {
 		statusCode := c.Writer.Status()
 		clientIP := c.ClientIP()
 		method := c.Request.Method
+		reqID := GetRequestID(c)
 
 		attrs := []any{
 			"status", statusCode,
@@ -27,6 +28,7 @@ func Logger() gin.HandlerFunc {
 			"query", query,
 			"ip", clientIP,
 			"latency_ms", latency.Milliseconds(),
+			"request_id", reqID,
 		}
 
 		switch {

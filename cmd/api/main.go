@@ -21,8 +21,8 @@ import (
 	"gin-starter-pack/pkg/jwt"
 	"gin-starter-pack/pkg/logger"
 	"gin-starter-pack/pkg/mail"
+	"gin-starter-pack/pkg/queue"
 	"gin-starter-pack/pkg/redis"
-	"gin-starter-pack/pkg/worker"
 )
 
 // @title           Gin Clean Architecture Starter Pack API
@@ -64,11 +64,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Run Auto Migrations
-	slog.Info("Running database auto-migrations...")
-	if err := db.AutoMigrate(domain.Entities()...); err != nil {
-		slog.Error("Failed to auto-migrate database", "error", err)
-		os.Exit(1)
+	// Run Auto Migrations (Guarded by DB_AUTO_MIGRATE for production safety)
+	if cfg.Database.AutoMigrate {
+		slog.Info("Running database auto-migrations...")
+		if err := db.AutoMigrate(domain.Entities()...); err != nil {
+			slog.Error("Failed to auto-migrate database", "error", err)
+			os.Exit(1)
+		}
+	} else {
+		slog.Info("Database auto-migration skipped (DB_AUTO_MIGRATE=false)")
 	}
 
 	// Initialize Redis (Conditional)
@@ -79,11 +83,10 @@ func main() {
 	}
 
 	// Initialize JWT Service
+	if cfg.App.Env == "production" && (cfg.JWT.Secret == "super-secret-key-change-me-in-production" || len(cfg.JWT.Secret) < 32) {
+		slog.Warn("SECURITY RISK: Using default or weak JWT_SECRET in production! Please set a strong random secret key (minimum 32 characters).")
+	}
 	jwtService := jwt.NewJWTService(cfg.JWT.Secret, cfg.JWT.ExpiryHours)
-
-	// Initialize Background Worker Pool
-	workerPool := worker.NewPool(cfg.Worker.Concurrency, cfg.Worker.QueueSize)
-	workerPool.Start()
 
 	// Initialize Mailer (SMTP or Log mode)
 	mailerService := mail.NewMailer(&mail.Config{
@@ -97,9 +100,21 @@ func main() {
 		Encryption:  cfg.Mail.Encryption,
 	})
 
+	// Setup Shared Queue Registry and Handlers
+	queueRegistry := queue.NewRegistry()
+	usecase.RegisterUserQueueHandlers(queueRegistry, mailerService)
+
+	// Initialize Background Queue Subsystem
+	queueDispatcher, queueWorker, err := queue.InitQueue(&cfg.Queue, queueRegistry, db, redisClient)
+	if err != nil {
+		slog.Error("Failed to initialize queue subsystem", "error", err)
+		os.Exit(1)
+	}
+	_ = queueWorker.Start(context.Background())
+
 	// Dependency Injection
 	userRepo := gormRepo.NewUserRepository(db)
-	userUsecase := usecase.NewUserUsecase(userRepo, redisClient, jwtService, workerPool, mailerService)
+	userUsecase := usecase.NewUserUsecase(userRepo, redisClient, jwtService, queueDispatcher, mailerService)
 
 	userHandler := handler.NewUserHandler(userUsecase, cfg.JWT.ExpiryHours*3600)
 	healthHandler := handler.NewHealthHandler(db, redisClient)
@@ -146,8 +161,13 @@ func main() {
 		slog.Error("Server forced to shutdown", "error", err)
 	}
 
-	// Stop worker pool
-	workerPool.Stop(5 * time.Second)
+	// Stop queue worker pool and dispatcher
+	if err := queueWorker.Stop(5 * time.Second); err != nil {
+		slog.Warn("Error stopping queue worker pool", "error", err)
+	}
+	if err := queueDispatcher.Close(); err != nil {
+		slog.Warn("Error closing queue dispatcher", "error", err)
+	}
 
 	// Close Redis
 	if err := redisClient.Close(); err != nil {

@@ -18,6 +18,7 @@ type Config struct {
 	CORS      CorsConfig
 	RateLimit RateLimitConfig
 	Worker    WorkerConfig
+	Queue     QueueConfig
 }
 
 type AppConfig struct {
@@ -37,7 +38,8 @@ type DBConfig struct {
 	SSLMode         string
 	MaxOpenConns    int
 	MaxIdleConns    int
-	ConnMaxLifetime int // in minutes
+	ConnMaxLifetime int  // in minutes
+	AutoMigrate     bool // whether to run GORM AutoMigrate on startup (default true)
 }
 
 type RedisConfig struct {
@@ -94,6 +96,14 @@ type WorkerConfig struct {
 	QueueSize   int
 }
 
+type QueueConfig struct {
+	Driver         string // "database", "redis", "memory", "sync"
+	QueueName      string // default: "default"
+	Concurrency    int    // default: 5
+	MaxAttempts    int    // default: 3
+	PollIntervalMs int    // default: 1000
+}
+
 func LoadConfig() (*Config, error) {
 	v := viper.New()
 
@@ -113,6 +123,7 @@ func LoadConfig() (*Config, error) {
 	v.SetDefault("DB_MAX_OPEN_CONNS", 25)
 	v.SetDefault("DB_MAX_IDLE_CONNS", 10)
 	v.SetDefault("DB_CONN_MAX_LIFETIME", 15)
+	v.SetDefault("DB_AUTO_MIGRATE", true)
 
 	v.SetDefault("REDIS_ENABLED", false)
 	v.SetDefault("REDIS_HOST", "localhost")
@@ -154,6 +165,12 @@ func LoadConfig() (*Config, error) {
 	v.SetDefault("WORKER_CONCURRENCY", 5)
 	v.SetDefault("WORKER_QUEUE_SIZE", 100)
 
+	v.SetDefault("QUEUE_DRIVER", "database")
+	v.SetDefault("QUEUE_NAME", "default")
+	v.SetDefault("QUEUE_CONCURRENCY", 5)
+	v.SetDefault("QUEUE_MAX_ATTEMPTS", 3)
+	v.SetDefault("QUEUE_POLL_INTERVAL_MS", 1000)
+
 	// Read .env file
 	v.SetConfigFile(".env")
 	v.SetConfigType("env")
@@ -191,6 +208,7 @@ func LoadConfig() (*Config, error) {
 			MaxOpenConns:    v.GetInt("DB_MAX_OPEN_CONNS"),
 			MaxIdleConns:    v.GetInt("DB_MAX_IDLE_CONNS"),
 			ConnMaxLifetime: v.GetInt("DB_CONN_MAX_LIFETIME"),
+			AutoMigrate:     v.GetBool("DB_AUTO_MIGRATE"),
 		},
 		Redis: RedisConfig{
 			Enabled:  v.GetBool("REDIS_ENABLED"),
@@ -238,6 +256,13 @@ func LoadConfig() (*Config, error) {
 		Worker: WorkerConfig{
 			Concurrency: v.GetInt("WORKER_CONCURRENCY"),
 			QueueSize:   v.GetInt("WORKER_QUEUE_SIZE"),
+		},
+		Queue: QueueConfig{
+			Driver:         v.GetString("QUEUE_DRIVER"),
+			QueueName:      v.GetString("QUEUE_NAME"),
+			Concurrency:    v.GetInt("QUEUE_CONCURRENCY"),
+			MaxAttempts:    v.GetInt("QUEUE_MAX_ATTEMPTS"),
+			PollIntervalMs: v.GetInt("QUEUE_POLL_INTERVAL_MS"),
 		},
 	}
 

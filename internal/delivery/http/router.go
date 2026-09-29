@@ -31,16 +31,20 @@ func SetupRouter(cfg RouterConfig) *gin.Engine {
 	router := gin.New()
 
 	// Global Middlewares
+	router.Use(middleware.RequestID())
 	router.Use(middleware.Logger())
 	router.Use(middleware.Recovery())
+	router.Use(middleware.SecurityHeaders(cfg.AppEnv))
 	router.Use(middleware.CORS(cfg.CORS))
 	router.Use(middleware.NewIPRateLimiter(cfg.RateLimit).Handler())
 
 	// Swagger API Docs
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
-	// Health Check
+	// Health & Kubernetes Probes
 	router.GET("/health", cfg.HealthHandler.Check)
+	router.GET("/health/live", cfg.HealthHandler.Liveness)
+	router.GET("/health/ready", cfg.HealthHandler.Readiness)
 
 	// API V1 Group
 	v1 := router.Group("/api/v1")

@@ -4,23 +4,59 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: gin-api
+    restart: unless-stopped
     ports:
       - "8080:8080"
     environment:
       - APP_PORT=8080
-      - APP_ENV=development
+      - APP_ENV=production
       - DB_DRIVER=postgres
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_USER=postgres
       - DB_PASSWORD=postgres
       - DB_NAME=app_db
+      - DB_AUTO_MIGRATE=true
       - REDIS_ENABLED=true
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - QUEUE_DRIVER=database
+      - LOG_DRIVER=stdout
+      - LOG_FORMAT=json
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gin-worker
+    command: ["/app/worker"]
+    restart: unless-stopped
+    environment:
+      - APP_ENV=production
+      - DB_DRIVER=postgres
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=app_db
+      - DB_AUTO_MIGRATE=false
+      - REDIS_ENABLED=true
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - QUEUE_DRIVER=database
+      - QUEUE_CONCURRENCY=5
+      - LOG_DRIVER=stdout
+      - LOG_FORMAT=json
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   postgres:
     image: postgres:16-alpine
@@ -34,6 +70,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d app_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   mysql:
     image: mysql:8.0
@@ -49,6 +90,11 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
     profiles: ["mysql-stack"]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
@@ -58,6 +104,11 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres_data:

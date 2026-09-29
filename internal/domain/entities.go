@@ -4,5 +4,6 @@ package domain
 func Entities() []interface{} {
 	return []interface{}{
 		&User{},
+		&JobRecord{},
 	}
 }
