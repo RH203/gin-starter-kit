@@ -15,29 +15,26 @@ const (
 	ContextUserEmailKey = "userEmail"
 )
 
-// AuthMiddleware creates a Gin middleware that validates JWT tokens from cookies or Authorization header
+// AuthMiddleware creates a Gin middleware that validates JWT tokens from Authorization header
 func AuthMiddleware(jwtService *jwt.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var tokenString string
-
-		// Attempt to extract token from HTTP-only cookie first
-		if cookieToken, err := c.Cookie("access_token"); err == nil && cookieToken != "" {
-			tokenString = cookieToken
-		} else if cookieToken, err := c.Cookie("token"); err == nil && cookieToken != "" {
-			tokenString = cookieToken
-		} else {
-			// Fallback to Authorization Header
-			authHeader := c.GetHeader("Authorization")
-			if authHeader != "" {
-				parts := strings.SplitN(authHeader, " ", 2)
-				if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
-					tokenString = strings.TrimSpace(parts[1])
-				}
-			}
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			response.Error(c, http.StatusUnauthorized, "Authorization header is required", nil)
+			c.Abort()
+			return
 		}
 
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			response.Error(c, http.StatusUnauthorized, "Authorization header must be in Bearer token format", nil)
+			c.Abort()
+			return
+		}
+
+		tokenString := strings.TrimSpace(parts[1])
 		if tokenString == "" {
-			response.Error(c, http.StatusUnauthorized, "Authentication required (missing auth cookie or Authorization header)", nil)
+			response.Error(c, http.StatusUnauthorized, "Bearer token is empty", nil)
 			c.Abort()
 			return
 		}

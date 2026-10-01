@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"gin-starter-pack/internal/delivery/http/middleware"
 	"gin-starter-pack/internal/domain"
 	"gin-starter-pack/pkg/response"
 
@@ -12,18 +13,12 @@ import (
 )
 
 type UserHandler struct {
-	usecase      domain.UserUsecase
-	cookieMaxAge int
+	usecase domain.UserUsecase
 }
 
-func NewUserHandler(usecase domain.UserUsecase, cookieMaxAge ...int) *UserHandler {
-	maxAge := 86400
-	if len(cookieMaxAge) > 0 && cookieMaxAge[0] > 0 {
-		maxAge = cookieMaxAge[0]
-	}
+func NewUserHandler(usecase domain.UserUsecase) *UserHandler {
 	return &UserHandler{
-		usecase:      usecase,
-		cookieMaxAge: maxAge,
+		usecase: usecase,
 	}
 }
 
@@ -61,7 +56,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 
 // Login godoc
 // @Summary      User login
-// @Description  Authenticate user with email and password to receive a signed JWT token and auth cookie
+// @Description  Authenticate user with email and password to receive a signed JWT Bearer token
 // @Tags         Auth
 // @Accept       json
 // @Produce      json
@@ -87,28 +82,17 @@ func (h *UserHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// Set HTTP-only Cookie for web client authentication
-	isSecure := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
-	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie("access_token", loginResp.Token, h.cookieMaxAge, "/", "", isSecure, true)
-	c.SetCookie("token", loginResp.Token, h.cookieMaxAge, "/", "", isSecure, true)
-
 	response.OK(c, "Login successful", loginResp)
 }
 
 // Logout godoc
 // @Summary      User logout
-// @Description  Clear the authentication cookies
+// @Description  Acknowledge user logout (client discards stored JWT token)
 // @Tags         Auth
 // @Produce      json
 // @Success      200  {object}  response.APIResponse
 // @Router       /auth/logout [post]
 func (h *UserHandler) Logout(c *gin.Context) {
-	isSecure := c.Request.TLS != nil || c.GetHeader("X-Forwarded-Proto") == "https"
-	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie("access_token", "", -1, "/", "", isSecure, true)
-	c.SetCookie("token", "", -1, "/", "", isSecure, true)
-
 	response.OK(c, "Logout successful", nil)
 }
 
@@ -123,13 +107,13 @@ func (h *UserHandler) Logout(c *gin.Context) {
 // @Failure      404  {object}  response.APIResponse
 // @Router       /auth/me [get]
 func (h *UserHandler) GetProfile(c *gin.Context) {
-	userID, exists := c.Get("userID")
-	if !exists {
+	userID, ok := middleware.GetUserIDFromContext(c)
+	if !ok {
 		response.Error(c, http.StatusUnauthorized, "Unauthorized access", nil)
 		return
 	}
 
-	profile, err := h.usecase.GetProfile(c.Request.Context(), userID.(string))
+	profile, err := h.usecase.GetProfile(c.Request.Context(), userID)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
 			response.Error(c, http.StatusNotFound, "User not found", nil)

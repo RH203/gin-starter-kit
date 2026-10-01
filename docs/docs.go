@@ -25,7 +25,7 @@ const docTemplate = `{
     "paths": {
         "/auth/login": {
             "post": {
-                "description": "Authenticate user with email and password to receive a signed JWT token and auth cookie",
+                "description": "Authenticate user with email and password to receive a signed JWT Bearer token",
                 "consumes": [
                     "application/json"
                 ],
@@ -71,7 +71,7 @@ const docTemplate = `{
         },
         "/auth/logout": {
             "post": {
-                "description": "Clear the authentication cookies",
+                "description": "Acknowledge user logout (client discards stored JWT token)",
                 "produces": [
                     "application/json"
                 ],
@@ -188,6 +188,67 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/response.APIResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/response.APIResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/health/live": {
+            "get": {
+                "description": "Fast probe checking whether the HTTP server process is running and responsive",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Health"
+                ],
+                "summary": "Kubernetes Liveness Probe",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/health/ready": {
+            "get": {
+                "description": "Probe verifying primary database connectivity. Returns 503 if DB is unreachable.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Health"
+                ],
+                "summary": "Kubernetes Readiness Probe",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     }
                 }

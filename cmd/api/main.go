@@ -116,7 +116,7 @@ func main() {
 	userRepo := gormRepo.NewUserRepository(db)
 	userUsecase := usecase.NewUserUsecase(userRepo, redisClient, jwtService, queueDispatcher, mailerService)
 
-	userHandler := handler.NewUserHandler(userUsecase, cfg.JWT.ExpiryHours*3600)
+	userHandler := handler.NewUserHandler(userUsecase)
 	healthHandler := handler.NewHealthHandler(db, redisClient)
 
 	router := httpDelivery.SetupRouter(httpDelivery.RouterConfig{

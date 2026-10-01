@@ -125,6 +125,7 @@ func InitDB(cfg *config.DBConfig, appEnv string) (*gorm.DB, error) {
 		sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
 		sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
 		sqlDB.SetConnMaxLifetime(time.Duration(cfg.ConnMaxLifetime) * time.Minute)
+		sqlDB.SetConnMaxIdleTime(5 * time.Minute)
 	}
 
 	slog.Info("Database connected successfully", "driver", cfg.Driver)

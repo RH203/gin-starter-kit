@@ -24,14 +24,13 @@ func setupTestRouter(jwtService *jwt.Service) *gin.Engine {
 	return r
 }
 
-func TestAuthMiddleware_HeaderAuth(t *testing.T) {
+func TestAuthMiddleware_ValidBearerToken(t *testing.T) {
 	jwtService := jwt.NewJWTService("super-secret-key", 24)
 	token, err := jwtService.GenerateToken("user-123", "test@example.com")
 	assert.NoError(t, err)
 
 	router := setupTestRouter(jwtService)
 
-	// Valid Bearer token
 	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
@@ -41,54 +40,53 @@ func TestAuthMiddleware_HeaderAuth(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "user-123")
 }
 
-func TestAuthMiddleware_CookieAuth(t *testing.T) {
-	jwtService := jwt.NewJWTService("super-secret-key", 24)
-	token, err := jwtService.GenerateToken("user-456", "cookie@example.com")
-	assert.NoError(t, err)
-
-	router := setupTestRouter(jwtService)
-
-	// Valid access_token cookie
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
-	req.AddCookie(&http.Cookie{
-		Name:     "access_token",
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-	})
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Contains(t, w.Body.String(), "user-456")
-}
-
-func TestAuthMiddleware_MissingAuth(t *testing.T) {
+func TestAuthMiddleware_MissingHeader(t *testing.T) {
 	jwtService := jwt.NewJWTService("super-secret-key", 24)
 	router := setupTestRouter(jwtService)
 
-	// No cookie and no header
 	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Contains(t, w.Body.String(), "Authorization header is required")
 }
 
-func TestAuthMiddleware_InvalidToken(t *testing.T) {
+func TestAuthMiddleware_InvalidHeaderFormat(t *testing.T) {
 	jwtService := jwt.NewJWTService("super-secret-key", 24)
 	router := setupTestRouter(jwtService)
 
-	// Invalid cookie value
+	testCases := []struct {
+		name       string
+		authHeader string
+	}{
+		{"Not Bearer", "Basic some-token"},
+		{"Missing Token", "Bearer"},
+		{"Missing Token with space", "Bearer "},
+		{"Raw Token without Bearer", "raw-token-string"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+			req.Header.Set("Authorization", tc.authHeader)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, http.StatusUnauthorized, w.Code)
+		})
+	}
+}
+
+func TestAuthMiddleware_InvalidOrExpiredToken(t *testing.T) {
+	jwtService := jwt.NewJWTService("super-secret-key", 24)
+	router := setupTestRouter(jwtService)
+
 	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
-	req.AddCookie(&http.Cookie{
-		Name:     "access_token",
-		Value:    "invalid.jwt.token",
-		Path:     "/",
-		HttpOnly: true,
-	})
+	req.Header.Set("Authorization", "Bearer invalid.jwt.token")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assert.Contains(t, w.Body.String(), "Invalid or expired token")
 }

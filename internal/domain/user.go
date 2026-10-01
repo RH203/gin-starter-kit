@@ -33,7 +33,7 @@ type LoginRequest struct {
 }
 
 type LoginResponse struct {
-	Token string        `json:"-"`
+	Token string        `json:"token"`
 	User  *UserResponse `json:"user"`
 }
 
