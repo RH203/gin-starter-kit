@@ -63,7 +63,7 @@ paths:
       consumes:
       - application/json
       description: Authenticate user with email and password to receive a signed JWT
-        token and auth cookie
+        Bearer token
       parameters:
       - description: Login Credentials
         in: body
@@ -91,7 +91,7 @@ paths:
       - Auth
   /auth/logout:
     post:
-      description: Clear the authentication cookies
+      description: Acknowledge user logout (client discards stored JWT token)
       produces:
       - application/json
       responses:
@@ -166,7 +166,49 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/response.APIResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/response.APIResponse'
       summary: Health check
+      tags:
+      - Health
+  /health/live:
+    get:
+      description: Fast probe checking whether the HTTP server process is running
+        and responsive
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Kubernetes Liveness Probe
+      tags:
+      - Health
+  /health/ready:
+    get:
+      description: Probe verifying primary database connectivity. Returns 503 if DB
+        is unreachable.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Kubernetes Readiness Probe
       tags:
       - Health
   /users:

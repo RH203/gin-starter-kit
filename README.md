@@ -1,6 +1,6 @@
 # Gin Go Clean Architecture Starter Pack
 
-A production-ready REST API starter pack built with **Go (Golang)** and the **Gin Web Framework**, architected according to **Clean Architecture (Uncle Bob)** principles. Modular, loosely coupled, and flexible: supports dynamic multi-database switching (PostgreSQL, MySQL, SQLite), optional Redis caching, JWT authentication, daily rotating logs, rate limiting, Swagger UI, and background workers.
+A production-ready REST API starter pack built with **Go (Golang)** and the **Gin Web Framework**, architected according to **Clean Architecture (Uncle Bob)** principles. Modular, loosely coupled, and flexible: supports dynamic multi-database switching (PostgreSQL, MySQL, SQLite), optional Redis caching, JWT authentication, daily rotating logs, rate limiting, Swagger UI, pluggable background queues (database, redis, memory, sync), and dedicated workers.
 
 ---
 
@@ -35,7 +35,7 @@ A production-ready REST API starter pack built with **Go (Golang)** and the **Gi
 - **Multi-Database Support**: Switch between `postgres`, `mysql`, and `sqlite` simply by modifying `DB_DRIVER` or providing a direct `DB_DSN` without altering application code.
 - **Driver Registry Pattern**: Easily install and plug in third-party GORM drivers (e.g. SQL Server, ClickHouse) in just a few lines.
 - **Optional Redis Cache**: Redis can be toggled on/off (`REDIS_ENABLED=true/false`). When disabled, queries safely bypass the cache with zero downtime or panics.
-- **JWT Authentication**: Built-in HMAC-SHA256 JWT generation, validation, and Gin auth middleware (`Authorization: Bearer <token>`).
+- **JWT Authentication**: Built-in HMAC-SHA256 JWT generation, validation, and Gin auth middleware (`Authorization: Bearer <token>`), fully optimized for Mobile Apps (Flutter, React Native, iOS, Android) and Web Single Page Applications.
 - **Dedicated Password Hashing**: Standalone `pkg/hash` module powered by Bcrypt.
 - **Pluggable Structured Logger (slog)**: Powered by Go standard `log/slog` and `lumberjack`. Supports pluggable drivers (`stdout`, `file`, `stack`, `discard`) and formats (`json`, `text`) with automatic daily gzip log file rotation and extensible 3rd-party driver registration.
 - **Unified Background Queue (Laravel-Style)**: Modular queue engine in `pkg/queue` supporting `database` (SQL table `jobs`, survives server crashes with zero extra infrastructure), `redis` (distributed high-throughput), `memory` (fast local dev), and `sync` (unit tests). Features atomic locking and exponential retry backoff.
@@ -601,7 +601,7 @@ func RunAll(db *gorm.DB) error {
 | `CORS_ALLOWED_ORIGINS` | string / JSON array | `*` | Allowed CORS origins: JSON array `["http://localhost:3000","https://example.com"]` or comma-separated string |
 | `CORS_ALLOWED_METHODS` | string | `GET,POST,...` | Allowed HTTP methods |
 | `CORS_ALLOWED_HEADERS` | string | `Content-Type,...` | Allowed request headers |
-| `CORS_ALLOW_CREDENTIALS` | bool | `true` | Allow browser cookies / credentials across origins |
+| `CORS_ALLOW_CREDENTIALS` | bool | `true` | Allow credentials / authorization headers across origins |
 | `RATE_LIMIT_ENABLED` | bool | `true` | Enable/disable rate limiter |
 | `RATE_LIMIT_RPS` | float | `20.0` | Requests allowed per second per IP |
 | `RATE_LIMIT_BURST` | int | `40` | Burst request allowance |
@@ -844,15 +844,13 @@ func (u *productUsecase) GetProduct(ctx context.Context, id string) (*domain.Pro
   "password": "secretpassword123"
 }
 ```
-- **Response Headers**:
-  `Set-Cookie: access_token=<token>; Path=/; HttpOnly; SameSite=Lax`
-  `Set-Cookie: token=<token>; Path=/; HttpOnly; SameSite=Lax`
 - **Response Body** (`200 OK`):
 ```json
 {
   "success": true,
   "message": "Login successful",
   "data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
     "user": {
       "id": "55c5e397-faf2-44d2-bda1-b66760860385",
       "name": "Jane Doe",
@@ -864,7 +862,7 @@ func (u *productUsecase) GetProduct(ctx context.Context, id string) (*domain.Pro
 
 ### User Logout (`/api/v1/auth/logout`)
 - **Method**: `POST`
-- **Description**: Clears `access_token` and `token` cookies.
+- **Description**: User logout acknowledgement (client app clears stored JWT token).
 - **Response** (`200 OK`):
 ```json
 {
@@ -876,7 +874,7 @@ func (u *productUsecase) GetProduct(ctx context.Context, id string) (*domain.Pro
 
 ### Authenticated Profile (`/api/v1/auth/me`) [Protected JWT]
 - **Method**: `GET`
-- **Authentication**: Either `Cookie: access_token=<token>` or `Authorization: Bearer <token>`
+- **Authentication**: `Authorization: Bearer <token>`
 - **Response** (`200 OK`):
 ```json
 {
@@ -892,7 +890,7 @@ func (u *productUsecase) GetProduct(ctx context.Context, id string) (*domain.Pro
 
 ### Paginated User List (`/api/v1/users`) [Protected JWT]
 - **URL**: `GET /api/v1/users?page=1&page_size=10`
-- **Authentication**: Either `Cookie: access_token=<token>` or `Authorization: Bearer <token>`
+- **Authentication**: `Authorization: Bearer <token>`
 - **Response** (`200 OK`):
 ```json
 {
@@ -920,7 +918,7 @@ func (u *productUsecase) GetProduct(ctx context.Context, id string) (*domain.Pro
 
 ### Get User by ID (`/api/v1/users/:id`) [Protected JWT]
 - **URL**: `GET /api/v1/users/:id`
-- **Authentication**: Either `Cookie: access_token=<token>` or `Authorization: Bearer <token>`
+- **Authentication**: `Authorization: Bearer <token>`
 - *Note: If Redis is enabled, responses are cached for 10 minutes.*
 
 ### 7. Update User (`/api/v1/users/:id`) [Protected JWT]
